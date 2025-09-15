@@ -39,7 +39,11 @@ jobs:
         gcloud services enable cloudfunctions.googleapis.com
         gcloud services enable cloudbuild.googleapis.com
         gcloud services enable artifactregistry.googleapis.com
-        echo "APIs enabled successfully!"
+        gcloud services enable cloudresourcemanager.googleapis.com
+        gcloud services enable run.googleapis.com
+        gcloud services enable eventarc.googleapis.com
+        gcloud services enable pubsub.googleapis.com
+        echo "All APIs enabled successfully!"
 
     - name: Deploy to Cloud Functions
       run: |
