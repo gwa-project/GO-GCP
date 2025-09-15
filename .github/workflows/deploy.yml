@@ -1,0 +1,53 @@
+name: Deploy to Google Cloud Functions
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  FUNCTION_NAME: go-gcp-function
+  REGION: asia-southeast2
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22'
+
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GOOGLE_CREDENTIALS }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+
+    - name: Verify authentication
+      run: gcloud auth list
+
+    - name: Deploy to Cloud Functions
+      run: |
+        gcloud functions deploy ${{ env.FUNCTION_NAME }} \
+          --region=${{ env.REGION }} \
+          --source=. \
+          --entry-point=WebHook \
+          --runtime=go122 \
+          --trigger=http \
+          --allow-unauthenticated \
+          --timeout=540s \
+          --memory=256MB \
+          --set-env-vars MONGOSTRING='${{ secrets.MONGOSTRING }}',PRKEY='${{ secrets.PRKEY }}',ENVIRONMENT='production'
+
+    - name: Get function URL
+      run: |
+        FUNCTION_URL=$(gcloud functions describe ${{ env.FUNCTION_NAME }} --region=${{ env.REGION }} --format="value(serviceConfig.uri)")
+        echo "Function deployed at: $FUNCTION_URL"
+        echo "Health check: $FUNCTION_URL/health"
