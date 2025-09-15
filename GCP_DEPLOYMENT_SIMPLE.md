@@ -45,7 +45,7 @@ gcloud functions deploy go-gcp-function \
   --source=. \
   --entry-point=WebHook \
   --runtime=go122 \
-  --trigger=http \
+  --trigger-http \
   --allow-unauthenticated \
   --timeout=540s \
   --memory=256MB \
