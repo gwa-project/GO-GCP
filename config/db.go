@@ -16,7 +16,8 @@ var Database *mongo.Database
 func ConnectMongoDB() {
 	mongoString := GetMongoString()
 	if mongoString == "" {
-		log.Fatal("MONGOSTRING environment variable is not set")
+		log.Println("Warning: MONGOSTRING not set, MongoDB will not be connected")
+		return
 	}
 
 	clientOptions := options.Client().ApplyURI(mongoString)
@@ -26,17 +27,19 @@ func ConnectMongoDB() {
 
 	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
-		log.Fatal("Failed to connect to MongoDB:", err)
+		log.Printf("Failed to connect to MongoDB: %v", err)
+		return
 	}
 
 	// Test the connection
 	err = client.Ping(ctx, nil)
 	if err != nil {
-		log.Fatal("Failed to ping MongoDB:", err)
+		log.Printf("Failed to ping MongoDB: %v", err)
+		return
 	}
 
 	MongoClient = client
-	Database = client.Database("gogcp") // Change database name as needed
+	Database = client.Database("gogcp")
 	log.Println("Connected to MongoDB successfully")
 }
 
@@ -50,5 +53,10 @@ func GetDatabase() *mongo.Database {
 
 // GetCollection returns a collection from the database
 func GetCollection(collectionName string) *mongo.Collection {
-	return GetDatabase().Collection(collectionName)
+	db := GetDatabase()
+	if db == nil {
+		log.Printf("Database not connected, returning nil for collection: %s", collectionName)
+		return nil
+	}
+	return db.Collection(collectionName)
 }

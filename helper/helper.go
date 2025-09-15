@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"aidanwoods.dev/go-paseto"
+	"github.com/gocroot/config"
 )
 
 // GenerateID generates a random ID
@@ -21,14 +24,6 @@ func GenerateID() string {
 // GetCurrentTime returns current timestamp
 func GetCurrentTime() time.Time {
 	return time.Now()
-}
-
-// ValidateEmail validates email format (simple validation)
-func ValidateEmail(email string) bool {
-	// Simple email validation - you might want to use a proper regex
-	return len(email) > 3 && len(email) < 254 &&
-		   fmt.Sprintf("%s", email) != "" &&
-		   len(email) > 0
 }
 
 // ResponseSuccess creates a success response
@@ -49,6 +44,87 @@ func ResponseError(message string, code int) map[string]interface{} {
 		"code":      code,
 		"timestamp": GetCurrentTime(),
 	}
+}
+
+// CreatePasetoToken creates a new PASETO token
+func CreatePasetoToken(userID string, duration time.Duration) (string, error) {
+	privateKey := config.GetPrivateKey()
+	if privateKey == "" {
+		privateKey = "default-key-32-bytes-long-for-paseto"
+	}
+
+	if len(privateKey) < 32 {
+		// Pad the key to 32 bytes if it's shorter
+		key := make([]byte, 32)
+		copy(key, []byte(privateKey))
+		privateKey = string(key)
+	}
+
+	// Use first 32 bytes and create proper symmetric key
+	keyBytes := []byte(privateKey)[:32]
+	symmetricKey := paseto.NewV4SymmetricKey()
+	copy(symmetricKey.ExportBytes(), keyBytes)
+
+	token := paseto.NewToken()
+
+	// Set claims
+	token.SetIssuer("gwa-project")
+	token.SetSubject(userID)
+	token.SetAudience("go-gcp-api")
+	token.SetExpiration(time.Now().Add(duration))
+	token.SetNotBefore(time.Now())
+	token.SetIssuedAt(time.Now())
+
+	// Add custom claims
+	token.Set("user_id", userID)
+	token.Set("project", "gwa-project-472118")
+
+	// Encrypt the token
+	encrypted := token.V4Encrypt(symmetricKey, nil)
+	return encrypted, nil
+}
+
+// VerifyPasetoToken verifies a PASETO token
+func VerifyPasetoToken(tokenString string) (string, error) {
+	privateKey := config.GetPrivateKey()
+	if privateKey == "" {
+		privateKey = "default-key-32-bytes-long-for-paseto"
+	}
+
+	if len(privateKey) < 32 {
+		key := make([]byte, 32)
+		copy(key, []byte(privateKey))
+		privateKey = string(key)
+	}
+
+	keyBytes := []byte(privateKey)[:32]
+	symmetricKey := paseto.NewV4SymmetricKey()
+	copy(symmetricKey.ExportBytes(), keyBytes)
+
+	parser := paseto.NewParser()
+
+	// Decrypt the token
+	token, err := parser.ParseV4Local(symmetricKey, tokenString, nil)
+	if err != nil {
+		return "", err
+	}
+
+	// Check if token is expired
+	expiration, err := token.GetExpiration()
+	if err != nil {
+		return "", err
+	}
+	if time.Now().After(expiration) {
+		return "", fmt.Errorf("token has expired")
+	}
+
+	// Extract user ID
+	userID, err := token.GetString("user_id")
+	if err != nil {
+		return "", err
+	}
+
+	return userID, nil
 }
 
 // LogInfo logs an info message
