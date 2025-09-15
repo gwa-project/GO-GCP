@@ -35,11 +35,11 @@ jobs:
 
     - name: Enable required APIs
       run: |
+        echo "Ensuring required APIs are enabled..."
         gcloud services enable cloudfunctions.googleapis.com
         gcloud services enable cloudbuild.googleapis.com
         gcloud services enable artifactregistry.googleapis.com
-        echo "APIs enabled, waiting 30 seconds for propagation..."
-        sleep 30
+        echo "APIs enabled successfully!"
 
     - name: Deploy to Cloud Functions
       run: |
