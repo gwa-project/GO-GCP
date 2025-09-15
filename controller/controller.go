@@ -15,7 +15,7 @@ import (
 
 // GetHome handles the home route
 func GetHome(w http.ResponseWriter, r *http.Request) {
-	response := helper.ResponseSuccess("Welcome to GO-GCP API with gocroot structure", map[string]interface{}{
+	response := helper.ResponseSuccess("Welcome gwa-project", map[string]interface{}{
 		"version":     "1.0.0",
 		"framework":   "gocroot",
 		"environment": config.GetEnvironment(),
