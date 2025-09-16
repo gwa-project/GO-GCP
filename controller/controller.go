@@ -15,21 +15,7 @@ import (
 
 // GetHome handles the home route
 func GetHome(w http.ResponseWriter, r *http.Request) {
-	response := helper.ResponseSuccess("Welcome gwa-project", map[string]interface{}{
-		"version":     "1.0.0",
-		"framework":   "gocroot",
-		"environment": config.GetEnvironment(),
-		"endpoints": []string{
-			"GET /health - Health check",
-			"GET /data/user - Get user data",
-			"POST /data/user - Create user",
-			"PUT /data/user - Update user",
-			"DELETE /data/user - Delete user",
-			"POST /auth/login - Login",
-			"POST /auth/register - Register",
-			"GET /api/users - Get all users",
-		},
-	})
+	response := helper.ResponseSuccess("Welcome gwa-project", nil)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }
