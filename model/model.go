@@ -13,6 +13,8 @@ type User struct {
 	Email       string             `json:"email" bson:"email"`
 	PhoneNumber string             `json:"phonenumber,omitempty" bson:"phonenumber,omitempty"`
 	Password    string             `json:"-" bson:"password,omitempty"`
+	Picture     string             `json:"picture,omitempty" bson:"picture,omitempty"`
+	GoogleID    string             `json:"google_id,omitempty" bson:"google_id,omitempty"`
 	Token       string             `json:"token,omitempty" bson:"token,omitempty"`
 	Role        string             `json:"role,omitempty" bson:"role,omitempty"`
 	CreatedAt   time.Time          `json:"created_at" bson:"created_at"`
@@ -30,8 +32,10 @@ type Response struct {
 
 // LoginRequest represents a login request
 type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email       string                 `json:"email"`
+	Password    string                 `json:"password"`
+	GoogleAuth  bool                   `json:"google_auth,omitempty"`
+	UserData    map[string]interface{} `json:"user_data,omitempty"`
 }
 
 // RegisterRequest represents a registration request

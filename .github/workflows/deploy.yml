@@ -57,7 +57,7 @@ jobs:
           --allow-unauthenticated \
           --timeout=540s \
           --memory=256MB \
-          --set-env-vars MONGOSTRING='${{ secrets.MONGOSTRING }}',PRKEY='${{ secrets.PRKEY }}',ENVIRONMENT='production'
+          --set-env-vars MONGOSTRING='${{ secrets.MONGOSTRING }}',PRKEY='${{ secrets.PRKEY }}',ENVIRONMENT='production',GOOGLE_CLIENT_ID='${{ secrets.GOOGLE_CLIENT_ID }}',GOOGLE_CLIENT_SECRET='${{ secrets.GOOGLE_CLIENT_SECRET }}'
 
     - name: Get function URL
       run: |

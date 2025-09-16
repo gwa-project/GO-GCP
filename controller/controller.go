@@ -36,12 +36,32 @@ func GetHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// GetConfig handles configuration for frontend
+func GetConfig(w http.ResponseWriter, r *http.Request) {
+	response := helper.ResponseSuccess("Configuration data", map[string]interface{}{
+		"google_client_id": config.GetGoogleClientID(),
+		"environment":      config.GetEnvironment(),
+		"app_name":         "GWA Project",
+		"app_version":      "1.0.0",
+	})
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
 // GetDataUser gets user data from token
 func GetDataUser(w http.ResponseWriter, r *http.Request) {
-	// Get token from header
+	// Get token from header (support both Login and Authorization)
 	token := r.Header.Get("Login")
 	if token == "" {
-		response := helper.ResponseError("Login header required", http.StatusUnauthorized)
+		// Try Authorization header for JWT Bearer token
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "" && len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+			token = authHeader[7:]
+		}
+	}
+
+	if token == "" {
+		response := helper.ResponseError("Authorization token required", http.StatusUnauthorized)
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(response)
 		return
@@ -254,7 +274,7 @@ func DeleteDataUser(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// Login handles user login
+// Login handles user login (including Google OAuth)
 func Login(w http.ResponseWriter, r *http.Request) {
 	var loginReq model.LoginRequest
 
@@ -266,7 +286,14 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For demo purposes, accept any non-empty credentials
+	// Check if this is Google OAuth login
+	if loginReq.GoogleAuth {
+		// Handle Google OAuth login
+		handleGoogleAuth(w, r, loginReq)
+		return
+	}
+
+	// Regular email/password login
 	if loginReq.Email == "" || loginReq.Password == "" {
 		response := helper.ResponseError("Email and password are required", http.StatusBadRequest)
 		w.WriteHeader(http.StatusBadRequest)
@@ -274,7 +301,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Demo: create a fake user ID
+	// Demo: create a fake user ID for regular login
 	userID := helper.GenerateID()
 
 	// Create PASETO token
@@ -294,6 +321,96 @@ func Login(w http.ResponseWriter, r *http.Request) {
 			"email": loginReq.Email,
 			"name":  "Demo User",
 		},
+	})
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleGoogleAuth handles Google OAuth authentication
+func handleGoogleAuth(w http.ResponseWriter, r *http.Request, loginReq model.LoginRequest) {
+	collection := config.GetCollection("users")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Extract user data from Google OAuth
+	userData := loginReq.UserData
+	if userData == nil {
+		response := helper.ResponseError("User data required for Google auth", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if user already exists
+	var existingUser model.User
+	err := collection.FindOne(context.Background(), bson.M{"email": userData["email"]}).Decode(&existingUser)
+
+	var user model.User
+	var userID string
+
+	if err != nil {
+		// User doesn't exist, create new user
+		user = model.User{
+			Name:        userData["name"].(string),
+			Email:       userData["email"].(string),
+			Picture:     userData["picture"].(string),
+			GoogleID:    userData["google_id"].(string),
+			Role:        "user",
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+
+		result, err := collection.InsertOne(context.Background(), user)
+		if err != nil {
+			response := helper.ResponseError("Failed to create user", http.StatusInternalServerError)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		user.ID = result.InsertedID.(primitive.ObjectID)
+		userID = user.ID.Hex()
+	} else {
+		// User exists, update last login and Google data
+		update := bson.M{
+			"$set": bson.M{
+				"updated_at": time.Now(),
+				"picture":    userData["picture"],
+				"google_id":  userData["google_id"],
+			},
+		}
+
+		_, err = collection.UpdateOne(context.Background(), bson.M{"_id": existingUser.ID}, update)
+		if err != nil {
+			response := helper.ResponseError("Failed to update user", http.StatusInternalServerError)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		user = existingUser
+		user.Picture = userData["picture"].(string)
+		user.GoogleID = userData["google_id"].(string)
+		userID = user.ID.Hex()
+	}
+
+	// Create PASETO token
+	token, err := helper.CreatePasetoToken(userID, 24*time.Hour)
+	if err != nil {
+		response := helper.ResponseError("Failed to create token", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	response := helper.ResponseSuccess("Google login successful", map[string]interface{}{
+		"token":      token,
+		"expires_at": time.Now().Add(24 * time.Hour),
+		"user":       user,
 	})
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)

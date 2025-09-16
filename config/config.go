@@ -28,3 +28,13 @@ func GetEnvironment() string {
 	}
 	return env
 }
+
+// GetGoogleClientID returns Google OAuth Client ID
+func GetGoogleClientID() string {
+	return os.Getenv("GOOGLE_CLIENT_ID")
+}
+
+// GetGoogleClientSecret returns Google OAuth Client Secret
+func GetGoogleClientSecret() string {
+	return os.Getenv("GOOGLE_CLIENT_SECRET")
+}
