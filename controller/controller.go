@@ -13,6 +13,17 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// getStringFromInterface safely converts interface{} to string
+func getStringFromInterface(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	if str, ok := value.(string); ok {
+		return str
+	}
+	return ""
+}
+
 // GetHome handles the home route
 func GetHome(w http.ResponseWriter, r *http.Request) {
 	response := helper.ResponseSuccess("Welcome gwa-project", nil)
@@ -38,12 +49,8 @@ func GetHealth(w http.ResponseWriter, r *http.Request) {
 
 // GetConfig handles configuration for frontend
 func GetConfig(w http.ResponseWriter, r *http.Request) {
-	response := helper.ResponseSuccess("Configuration data", map[string]interface{}{
-		"google_client_id": config.GetGoogleClientID(),
-		"environment":      config.GetEnvironment(),
-		"app_name":         "GWA Project",
-		"app_version":      "1.0.0",
-	})
+	configData := config.GetConfigForAPI()
+	response := helper.ResponseSuccess("Configuration data", configData)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }
@@ -345,6 +352,14 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request, loginReq model.Log
 		return
 	}
 
+	// Validate required fields
+	if userData["email"] == nil || userData["name"] == nil {
+		response := helper.ResponseError("Email and name are required", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	// Check if user already exists
 	var existingUser model.User
 	err := collection.FindOne(context.Background(), bson.M{"email": userData["email"]}).Decode(&existingUser)
@@ -355,13 +370,13 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request, loginReq model.Log
 	if err != nil {
 		// User doesn't exist, create new user
 		user = model.User{
-			Name:        userData["name"].(string),
-			Email:       userData["email"].(string),
-			Picture:     userData["picture"].(string),
-			GoogleID:    userData["google_id"].(string),
-			Role:        "user",
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			Name:     getStringFromInterface(userData["name"]),
+			Email:    getStringFromInterface(userData["email"]),
+			Picture:  getStringFromInterface(userData["picture"]),
+			GoogleID: getStringFromInterface(userData["google_id"]),
+			Role:     "user",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
 		}
 
 		result, err := collection.InsertOne(context.Background(), user)
@@ -393,8 +408,8 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request, loginReq model.Log
 		}
 
 		user = existingUser
-		user.Picture = userData["picture"].(string)
-		user.GoogleID = userData["google_id"].(string)
+		user.Picture = getStringFromInterface(userData["picture"])
+		user.GoogleID = getStringFromInterface(userData["google_id"])
 		userID = user.ID.Hex()
 	}
 
@@ -517,6 +532,77 @@ func GetAllUsers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := helper.ResponseSuccess("Users retrieved successfully", users)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// PostConfig handles creating/updating config (admin only)
+func PostConfig(w http.ResponseWriter, r *http.Request) {
+	var configReq model.CreateConfigRequest
+
+	err := json.NewDecoder(r.Body).Decode(&configReq)
+	if err != nil {
+		response := helper.ResponseError("Invalid JSON format", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	collection := config.GetCollection("config")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if config already exists
+	var existingConfig model.Config
+	err = collection.FindOne(context.Background(), bson.M{}).Decode(&existingConfig)
+
+	configData := model.Config{
+		AppName:            configReq.AppName,
+		AppVersion:         configReq.AppVersion,
+		Environment:        configReq.Environment,
+		GoogleClientID:     configReq.GoogleClientID,
+		GoogleClientSecret: configReq.GoogleClientSecret,
+		MongoString:        configReq.MongoString,
+		PrivateKey:         configReq.PrivateKey,
+		UpdatedAt:          time.Now(),
+	}
+
+	if err != nil {
+		// Config doesn't exist, create new
+		configData.CreatedAt = time.Now()
+		result, err := collection.InsertOne(context.Background(), configData)
+		if err != nil {
+			response := helper.ResponseError("Failed to create config", http.StatusInternalServerError)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+		configData.ID = result.InsertedID.(primitive.ObjectID)
+	} else {
+		// Config exists, update it
+		configData.ID = existingConfig.ID
+		configData.CreatedAt = existingConfig.CreatedAt
+		_, err = collection.ReplaceOne(context.Background(), bson.M{"_id": existingConfig.ID}, configData)
+		if err != nil {
+			response := helper.ResponseError("Failed to update config", http.StatusInternalServerError)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}
+
+	response := helper.ResponseSuccess("Config saved successfully", map[string]interface{}{
+		"id":           configData.ID,
+		"app_name":     configData.AppName,
+		"app_version":  configData.AppVersion,
+		"environment":  configData.Environment,
+		"created_at":   configData.CreatedAt,
+		"updated_at":   configData.UpdatedAt,
+	})
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }

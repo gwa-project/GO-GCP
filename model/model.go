@@ -59,3 +59,28 @@ type UpdateUserRequest struct {
 	Email       string `json:"email,omitempty"`
 	PhoneNumber string `json:"phonenumber,omitempty"`
 }
+
+// Config represents application configuration stored in database
+type Config struct {
+	ID                 primitive.ObjectID `json:"_id,omitempty" bson:"_id,omitempty"`
+	AppName            string             `json:"app_name" bson:"app_name"`
+	AppVersion         string             `json:"app_version" bson:"app_version"`
+	Environment        string             `json:"environment" bson:"environment"`
+	GoogleClientID     string             `json:"google_client_id" bson:"google_client_id"`
+	GoogleClientSecret string             `json:"google_client_secret,omitempty" bson:"google_client_secret,omitempty"` // Don't expose in JSON
+	MongoString        string             `json:"-" bson:"mongo_string,omitempty"` // Never expose
+	PrivateKey         string             `json:"-" bson:"private_key,omitempty"`  // Never expose
+	CreatedAt          time.Time          `json:"created_at" bson:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at" bson:"updated_at"`
+}
+
+// CreateConfigRequest represents the request to create/update config
+type CreateConfigRequest struct {
+	AppName            string `json:"app_name"`
+	AppVersion         string `json:"app_version"`
+	Environment        string `json:"environment"`
+	GoogleClientID     string `json:"google_client_id"`
+	GoogleClientSecret string `json:"google_client_secret,omitempty"`
+	MongoString        string `json:"mongo_string,omitempty"`
+	PrivateKey         string `json:"private_key,omitempty"`
+}
