@@ -8,6 +8,7 @@ import (
 var AllowedOrigins = []string{
 	"https://gilarya.my.id",
 	"https://www.gilarya.my.id",
+	"https://dashboard.gilarya.my.id",
 	"https://gwa-project.vercel.app",
 	"https://www.gwa-project.vercel.app",
 	"http://localhost:3000",
