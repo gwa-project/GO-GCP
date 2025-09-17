@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gocroot/config"
@@ -49,10 +50,42 @@ func GetHealth(w http.ResponseWriter, r *http.Request) {
 
 // GetConfig handles configuration for frontend
 func GetConfig(w http.ResponseWriter, r *http.Request) {
+	// Ensure default config exists
+	ensureDefaultConfig()
+
 	configData := config.GetConfigForAPI()
 	response := helper.ResponseSuccess("Configuration data", configData)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
+}
+
+// ensureDefaultConfig creates default config if not exists
+func ensureDefaultConfig() {
+	collection := config.GetCollection("config")
+	if collection == nil {
+		return
+	}
+
+	// Check if config exists
+	var existingConfig model.Config
+	err := collection.FindOne(context.Background(), bson.M{}).Decode(&existingConfig)
+
+	if err != nil {
+		// Config doesn't exist, create default
+		defaultConfig := model.Config{
+			AppName:            "GWA Project",
+			AppVersion:         "1.0.0",
+			Environment:        os.Getenv("ENVIRONMENT"),
+			GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+			GoogleClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+			MongoString:        os.Getenv("MONGOSTRING"),
+			PrivateKey:         os.Getenv("PRKEY"),
+			CreatedAt:          time.Now(),
+			UpdatedAt:          time.Now(),
+		}
+
+		collection.InsertOne(context.Background(), defaultConfig)
+	}
 }
 
 // GetDataUser gets user data from token
