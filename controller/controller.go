@@ -33,21 +33,6 @@ func GetHome(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// GetHealth handles health check
-func GetHealth(w http.ResponseWriter, r *http.Request) {
-	dbStatus := "disconnected"
-	if config.Database != nil {
-		dbStatus = "connected"
-	}
-
-	response := helper.ResponseSuccess("System healthy", map[string]interface{}{
-		"database":    dbStatus,
-		"environment": config.GetEnvironment(),
-		"uptime":      time.Now(),
-	})
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-}
 
 // GetConfig handles configuration for frontend
 func GetConfig(w http.ResponseWriter, r *http.Request) {

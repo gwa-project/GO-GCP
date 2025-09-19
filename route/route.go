@@ -18,30 +18,16 @@ func URL(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case method == "GET" && path == "/":
 		controller.GetHome(w, r)
-	case method == "GET" && path == "/health":
-		controller.GetHealth(w, r)
 	case method == "GET" && path == "/config":
 		controller.GetConfig(w, r)
-	case method == "POST" && path == "/config":
-		controller.PostConfig(w, r)
 	case method == "GET" && path == "/data/user":
 		controller.GetDataUser(w, r)
-	case method == "POST" && path == "/data/user":
-		controller.PostDataUser(w, r)
-	case method == "PUT" && path == "/data/user":
-		controller.PutDataUser(w, r)
-	case method == "DELETE" && path == "/data/user":
-		controller.DeleteDataUser(w, r)
 	case method == "POST" && path == "/auth/login":
 		controller.Login(w, r)
 	case method == "POST" && path == "/auth/register":
 		controller.Register(w, r)
 	case method == "POST" && path == "/auth/refresh":
 		controller.RefreshToken(w, r)
-	case method == "POST" && path == "/auth/logout":
-		controller.Logout(w, r)
-	case method == "GET" && path == "/api/users":
-		controller.GetAllUsers(w, r)
 	case method == "GET" && path == "/users":
 		controller.GetAllUsers(w, r)
 	default:
