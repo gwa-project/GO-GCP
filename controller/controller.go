@@ -559,10 +559,12 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request, loginReq model.Log
 
 // Register handles user registration
 func Register(w http.ResponseWriter, r *http.Request) {
+	helper.LogInfo("Register endpoint called")
 	var registerReq model.RegisterRequest
 
 	err := json.NewDecoder(r.Body).Decode(&registerReq)
 	if err != nil {
+		helper.LogError("Invalid JSON in register request", err)
 		response := helper.ResponseError("Invalid JSON format", http.StatusBadRequest)
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(response)
@@ -587,6 +589,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 
 	// Validate password strength
 	if err := helper.ValidatePassword(registerReq.Password); err != nil {
+		helper.LogError("Password validation failed", err)
 		response := helper.ResponseError(err.Error(), http.StatusBadRequest)
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(response)
@@ -595,6 +598,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 
 	collection := config.GetCollection("users")
 	if collection == nil {
+		helper.LogError("Database not connected in Register endpoint", nil)
 		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(response)

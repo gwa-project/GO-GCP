@@ -8,10 +8,10 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 )
 
-// SetEnv sets environment variables
+// SetEnv sets environment variables and initializes database
 func SetEnv() {
-	// This function can be used to set default environment variables
-	// For now, we'll just ensure required vars are available
+	// Initialize database connection
+	ConnectMongoDB()
 }
 
 // GetMongoString returns MongoDB connection string
@@ -70,19 +70,17 @@ func getConfigFromDB() *model.Config {
 
 // GetConfigForAPI returns config data safe for API response
 func GetConfigForAPI() map[string]interface{} {
+	// Always try environment variables first for reliability
+	googleClientID := os.Getenv("GOOGLE_CLIENT_ID")
+
+	// Try database config as fallback
 	config := getConfigFromDB()
-	if config != nil {
-		return map[string]interface{}{
-			"google_client_id": config.GoogleClientID,
-			"app_name":         config.AppName,
-			"app_version":      config.AppVersion,
-			"environment":      config.Environment,
-		}
+	if config != nil && googleClientID == "" {
+		googleClientID = config.GoogleClientID
 	}
 
-	// Fallback to environment variables
 	return map[string]interface{}{
-		"google_client_id": os.Getenv("GOOGLE_CLIENT_ID"),
+		"google_client_id": googleClientID,
 		"app_name":         "GWA Project",
 		"app_version":      "1.0.0",
 		"environment":      GetEnvironment(),

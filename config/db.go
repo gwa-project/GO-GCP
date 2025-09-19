@@ -20,6 +20,14 @@ func ConnectMongoDB() {
 		return
 	}
 
+	log.Printf("Attempting to connect to MongoDB...")
+	// Hide password in logs
+	safeMongoString := mongoString
+	if len(mongoString) > 20 {
+		safeMongoString = mongoString[:10] + "***" + mongoString[len(mongoString)-10:]
+	}
+	log.Printf("MongoDB URI: %s", safeMongoString)
+
 	clientOptions := options.Client().ApplyURI(mongoString)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
