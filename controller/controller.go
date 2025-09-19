@@ -328,7 +328,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
 
 	// Check if this is Google OAuth login
 	if loginReq.GoogleAuth {
-		// Handle Google OAuth login
+		// Handle Google OAuth login with proper token verification
 		handleGoogleAuth(w, r, loginReq)
 		return
 	}
@@ -341,33 +341,14 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Demo: create a fake user ID for regular login
-	userID := helper.GenerateID()
-
-	// Create PASETO token
-	token, err := helper.CreatePasetoToken(userID, 24*time.Hour)
-	if err != nil {
-		response := helper.ResponseError("Failed to create token", http.StatusInternalServerError)
-		w.WriteHeader(http.StatusInternalServerError)
+	// Validate email format
+	if !helper.ValidateEmail(loginReq.Email) {
+		response := helper.ResponseError("Invalid email format", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	response := helper.ResponseSuccess("Login successful", map[string]interface{}{
-		"token":      token,
-		"expires_at": time.Now().Add(24 * time.Hour),
-		"user": map[string]interface{}{
-			"id":    userID,
-			"email": loginReq.Email,
-			"name":  "Demo User",
-		},
-	})
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-}
-
-// handleGoogleAuth handles Google OAuth authentication
-func handleGoogleAuth(w http.ResponseWriter, r *http.Request, loginReq model.LoginRequest) {
 	collection := config.GetCollection("users")
 	if collection == nil {
 		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
@@ -376,38 +357,121 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request, loginReq model.Log
 		return
 	}
 
-	// Extract user data from Google OAuth
-	userData := loginReq.UserData
-	if userData == nil {
-		response := helper.ResponseError("User data required for Google auth", http.StatusBadRequest)
+	// Find user by email
+	var user model.User
+	err = collection.FindOne(context.Background(), bson.M{"email": loginReq.Email}).Decode(&user)
+	if err != nil {
+		response := helper.ResponseError("Invalid email or password", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check password
+	if !helper.CheckPassword(loginReq.Password, user.Password) {
+		response := helper.ResponseError("Invalid email or password", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Update last login time
+	update := bson.M{
+		"$set": bson.M{
+			"updated_at": time.Now(),
+		},
+	}
+	collection.UpdateOne(context.Background(), bson.M{"_id": user.ID}, update)
+
+	// Create tokens
+	tokenDuration := 1 * time.Hour // Default 1 hour
+	if loginReq.RememberMe {
+		tokenDuration = 7 * 24 * time.Hour // 7 days if remember me
+	}
+
+	accessToken, err := helper.CreatePasetoToken(user.ID.Hex(), tokenDuration)
+	if err != nil {
+		response := helper.ResponseError("Failed to create access token", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	refreshToken, err := helper.CreateRefreshToken(user.ID.Hex())
+	if err != nil {
+		response := helper.ResponseError("Failed to create refresh token", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Prepare response
+	tokens := model.TokenResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int64(tokenDuration.Seconds()),
+		ExpiresAt:    time.Now().Add(tokenDuration),
+	}
+
+	// Remove sensitive data from user object
+	user.Password = ""
+
+	authResponse := model.AuthResponse{
+		User:    user,
+		Tokens:  tokens,
+		Message: "Login successful",
+	}
+
+	response := helper.ResponseSuccess("Login successful", authResponse)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleGoogleAuth handles Google OAuth authentication with proper token verification
+func handleGoogleAuth(w http.ResponseWriter, r *http.Request, loginReq model.LoginRequest) {
+	// Verify Google token first
+	if loginReq.GoogleToken == "" {
+		response := helper.ResponseError("Google token is required", http.StatusBadRequest)
 		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	// Validate required fields
-	if userData["email"] == nil || userData["name"] == nil {
-		response := helper.ResponseError("Email and name are required", http.StatusBadRequest)
-		w.WriteHeader(http.StatusBadRequest)
+	// Verify the Google token
+	tokenInfo, err := helper.VerifyGoogleToken(loginReq.GoogleToken)
+	if err != nil {
+		helper.LogError("Google token verification failed", err)
+		response := helper.ResponseError("Invalid Google token", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	collection := config.GetCollection("users")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
 	// Check if user already exists
 	var existingUser model.User
-	err := collection.FindOne(context.Background(), bson.M{"email": userData["email"]}).Decode(&existingUser)
+	err = collection.FindOne(context.Background(), bson.M{"email": tokenInfo.Email}).Decode(&existingUser)
 
 	var user model.User
-	var userID string
+	isNewUser := false
 
 	if err != nil {
 		// User doesn't exist, create new user
+		isNewUser = true
 		user = model.User{
-			Name:     getStringFromInterface(userData["name"]),
-			Email:    getStringFromInterface(userData["email"]),
-			Picture:  getStringFromInterface(userData["picture"]),
-			GoogleID: getStringFromInterface(userData["google_id"]),
-			Role:     "user",
+			Name:      tokenInfo.Name,
+			Email:     tokenInfo.Email,
+			Picture:   tokenInfo.Picture,
+			GoogleID:  tokenInfo.Sub,
+			Role:      "user",
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
@@ -421,14 +485,15 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request, loginReq model.Log
 		}
 
 		user.ID = result.InsertedID.(primitive.ObjectID)
-		userID = user.ID.Hex()
+		helper.LogInfo(fmt.Sprintf("New user created via Google OAuth: %s", user.Email))
 	} else {
-		// User exists, update last login and Google data
+		// User exists, update Google data and last login
 		update := bson.M{
 			"$set": bson.M{
 				"updated_at": time.Now(),
-				"picture":    userData["picture"],
-				"google_id":  userData["google_id"],
+				"picture":    tokenInfo.Picture,
+				"google_id":  tokenInfo.Sub,
+				"name":       tokenInfo.Name, // Update name from Google
 			},
 		}
 
@@ -441,25 +506,52 @@ func handleGoogleAuth(w http.ResponseWriter, r *http.Request, loginReq model.Log
 		}
 
 		user = existingUser
-		user.Picture = getStringFromInterface(userData["picture"])
-		user.GoogleID = getStringFromInterface(userData["google_id"])
-		userID = user.ID.Hex()
+		user.Picture = tokenInfo.Picture
+		user.GoogleID = tokenInfo.Sub
+		user.Name = tokenInfo.Name
+		user.UpdatedAt = time.Now()
+		helper.LogInfo(fmt.Sprintf("User logged in via Google OAuth: %s", user.Email))
 	}
 
-	// Create PASETO token
-	token, err := helper.CreatePasetoToken(userID, 24*time.Hour)
+	// Create tokens
+	tokenDuration := 1 * time.Hour // Default 1 hour
+	if loginReq.RememberMe {
+		tokenDuration = 7 * 24 * time.Hour // 7 days if remember me
+	}
+
+	accessToken, err := helper.CreatePasetoToken(user.ID.Hex(), tokenDuration)
 	if err != nil {
-		response := helper.ResponseError("Failed to create token", http.StatusInternalServerError)
+		response := helper.ResponseError("Failed to create access token", http.StatusInternalServerError)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	response := helper.ResponseSuccess("Google login successful", map[string]interface{}{
-		"token":      token,
-		"expires_at": time.Now().Add(24 * time.Hour),
-		"user":       user,
-	})
+	refreshToken, err := helper.CreateRefreshToken(user.ID.Hex())
+	if err != nil {
+		response := helper.ResponseError("Failed to create refresh token", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Prepare response
+	tokens := model.TokenResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int64(tokenDuration.Seconds()),
+		ExpiresAt:    time.Now().Add(tokenDuration),
+	}
+
+	googleAuthResponse := model.GoogleAuthResponse{
+		User:        user,
+		Tokens:      tokens,
+		IsNewUser:   isNewUser,
+		LastLoginAt: time.Now(),
+	}
+
+	response := helper.ResponseSuccess("Google login successful", googleAuthResponse)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }
@@ -476,9 +568,52 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate required fields
+	if registerReq.Name == "" || registerReq.Email == "" || registerReq.Password == "" {
+		response := helper.ResponseError("Name, email, and password are required", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Validate email format
+	if !helper.ValidateEmail(registerReq.Email) {
+		response := helper.ResponseError("Invalid email format", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Validate password strength
+	if err := helper.ValidatePassword(registerReq.Password); err != nil {
+		response := helper.ResponseError(err.Error(), http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	collection := config.GetCollection("users")
 	if collection == nil {
 		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if user already exists
+	var existingUser model.User
+	err = collection.FindOne(context.Background(), bson.M{"email": registerReq.Email}).Decode(&existingUser)
+	if err == nil {
+		response := helper.ResponseError("User with this email already exists", http.StatusConflict)
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Hash password
+	hashedPassword, err := helper.HashPassword(registerReq.Password)
+	if err != nil {
+		response := helper.ResponseError("Failed to secure password", http.StatusInternalServerError)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(response)
 		return
@@ -489,7 +624,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		Name:        registerReq.Name,
 		Email:       registerReq.Email,
 		PhoneNumber: registerReq.PhoneNumber,
-		Password:    registerReq.Password, // In production, hash this
+		Password:    hashedPassword,
 		Role:        "user",
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
@@ -506,19 +641,41 @@ func Register(w http.ResponseWriter, r *http.Request) {
 	user.ID = result.InsertedID.(primitive.ObjectID)
 	user.Password = "" // Don't return password
 
-	// Create token
-	token, err := helper.CreatePasetoToken(user.ID.Hex(), 24*time.Hour)
+	// Create tokens
+	tokenDuration := 1 * time.Hour
+	accessToken, err := helper.CreatePasetoToken(user.ID.Hex(), tokenDuration)
 	if err != nil {
-		response := helper.ResponseError("Failed to create token", http.StatusInternalServerError)
+		response := helper.ResponseError("Failed to create access token", http.StatusInternalServerError)
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	response := helper.ResponseSuccess("Registration successful", map[string]interface{}{
-		"token": token,
-		"user":  user,
-	})
+	refreshToken, err := helper.CreateRefreshToken(user.ID.Hex())
+	if err != nil {
+		response := helper.ResponseError("Failed to create refresh token", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Prepare response
+	tokens := model.TokenResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int64(tokenDuration.Seconds()),
+		ExpiresAt:    time.Now().Add(tokenDuration),
+	}
+
+	authResponse := model.AuthResponse{
+		User:    user,
+		Tokens:  tokens,
+		Message: "Registration successful",
+	}
+
+	helper.LogInfo(fmt.Sprintf("New user registered: %s", user.Email))
+	response := helper.ResponseSuccess("Registration successful", authResponse)
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(response)
 }
@@ -636,6 +793,122 @@ func PostConfig(w http.ResponseWriter, r *http.Request) {
 		"created_at":   configData.CreatedAt,
 		"updated_at":   configData.UpdatedAt,
 	})
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// RefreshToken handles token refresh
+func RefreshToken(w http.ResponseWriter, r *http.Request) {
+	var refreshReq model.RefreshTokenRequest
+
+	err := json.NewDecoder(r.Body).Decode(&refreshReq)
+	if err != nil {
+		response := helper.ResponseError("Invalid JSON format", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	if refreshReq.RefreshToken == "" {
+		response := helper.ResponseError("Refresh token is required", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Verify refresh token
+	userID, err := helper.VerifyPasetoToken(refreshReq.RefreshToken)
+	if err != nil {
+		response := helper.ResponseError("Invalid or expired refresh token", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Get user from database
+	collection := config.GetCollection("users")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	objectID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		response := helper.ResponseError("Invalid user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var user model.User
+	err = collection.FindOne(context.Background(), bson.M{"_id": objectID}).Decode(&user)
+	if err != nil {
+		response := helper.ResponseError("User not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Create new tokens
+	tokenDuration := 1 * time.Hour
+	newAccessToken, err := helper.CreatePasetoToken(userID, tokenDuration)
+	if err != nil {
+		response := helper.ResponseError("Failed to create new access token", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	newRefreshToken, err := helper.CreateRefreshToken(userID)
+	if err != nil {
+		response := helper.ResponseError("Failed to create new refresh token", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Prepare response
+	tokens := model.TokenResponse{
+		AccessToken:  newAccessToken,
+		RefreshToken: newRefreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int64(tokenDuration.Seconds()),
+		ExpiresAt:    time.Now().Add(tokenDuration),
+	}
+
+	response := helper.ResponseSuccess("Tokens refreshed successfully", tokens)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// Logout handles user logout (invalidate tokens)
+func Logout(w http.ResponseWriter, r *http.Request) {
+	// Get token from header
+	token := r.Header.Get("Authorization")
+	if token != "" && len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+
+	if token == "" {
+		token = r.Header.Get("Login")
+	}
+
+	if token != "" {
+		// Verify token
+		userID, err := helper.VerifyPasetoToken(token)
+		if err == nil {
+			// Log the logout
+			helper.LogInfo(fmt.Sprintf("User logged out: %s", userID))
+		}
+	}
+
+	// Since PASETO tokens are stateless, we can't invalidate them server-side
+	// In a production environment, you might want to maintain a blacklist
+	// or use shorter token expiration times
+
+	response := helper.ResponseSuccess("Logged out successfully", nil)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }

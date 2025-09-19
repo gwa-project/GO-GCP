@@ -36,7 +36,13 @@ func URL(w http.ResponseWriter, r *http.Request) {
 		controller.Login(w, r)
 	case method == "POST" && path == "/auth/register":
 		controller.Register(w, r)
+	case method == "POST" && path == "/auth/refresh":
+		controller.RefreshToken(w, r)
+	case method == "POST" && path == "/auth/logout":
+		controller.Logout(w, r)
 	case method == "GET" && path == "/api/users":
+		controller.GetAllUsers(w, r)
+	case method == "GET" && path == "/users":
 		controller.GetAllUsers(w, r)
 	default:
 		controller.NotFound(w, r)

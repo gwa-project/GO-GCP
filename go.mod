@@ -8,6 +8,7 @@ require (
 	aidanwoods.dev/go-paseto v1.5.2
 	github.com/GoogleCloudPlatform/functions-framework-go v1.9.0
 	go.mongodb.org/mongo-driver v1.16.1
+	golang.org/x/crypto v0.25.0
 )
 
 require (

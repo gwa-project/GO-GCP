@@ -32,10 +32,11 @@ type Response struct {
 
 // LoginRequest represents a login request
 type LoginRequest struct {
-	Email       string                 `json:"email"`
-	Password    string                 `json:"password"`
-	GoogleAuth  bool                   `json:"google_auth,omitempty"`
-	UserData    map[string]interface{} `json:"user_data,omitempty"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+	GoogleAuth  bool   `json:"google_auth,omitempty"`
+	GoogleToken string `json:"google_token,omitempty"`
+	RememberMe  bool   `json:"remember_me,omitempty"`
 }
 
 // RegisterRequest represents a registration request
@@ -83,4 +84,33 @@ type CreateConfigRequest struct {
 	GoogleClientSecret string `json:"google_client_secret,omitempty"`
 	MongoString        string `json:"mongo_string,omitempty"`
 	PrivateKey         string `json:"private_key,omitempty"`
+}
+
+// TokenResponse represents authentication token response
+type TokenResponse struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token,omitempty"`
+	TokenType    string    `json:"token_type"`
+	ExpiresIn    int64     `json:"expires_in"`
+	ExpiresAt    time.Time `json:"expires_at"`
+}
+
+// RefreshTokenRequest represents refresh token request
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+// GoogleAuthResponse represents Google OAuth response data
+type GoogleAuthResponse struct {
+	User         User          `json:"user"`
+	Tokens       TokenResponse `json:"tokens"`
+	IsNewUser    bool          `json:"is_new_user"`
+	LastLoginAt  time.Time     `json:"last_login_at"`
+}
+
+// AuthResponse represents general authentication response
+type AuthResponse struct {
+	User    User          `json:"user"`
+	Tokens  TokenResponse `json:"tokens"`
+	Message string        `json:"message"`
 }

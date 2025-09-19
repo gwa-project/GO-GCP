@@ -3,12 +3,16 @@ package helper
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"time"
 
 	"aidanwoods.dev/go-paseto"
 	"github.com/gocroot/config"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // GenerateID generates a random ID
@@ -139,4 +143,83 @@ func LogError(message string, err error) {
 	} else {
 		log.Printf("[ERROR] %s", message)
 	}
+}
+
+// HashPassword hashes a password using bcrypt
+func HashPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
+// CheckPassword verifies a password against its hash
+func CheckPassword(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
+// GoogleTokenInfo represents Google token verification response
+type GoogleTokenInfo struct {
+	Iss           string `json:"iss"`
+	Sub           string `json:"sub"`
+	Azp           string `json:"azp"`
+	Aud           string `json:"aud"`
+	Iat           string `json:"iat"`
+	Exp           string `json:"exp"`
+	Email         string `json:"email"`
+	EmailVerified string `json:"email_verified"`
+	Name          string `json:"name"`
+	Picture       string `json:"picture"`
+	GivenName     string `json:"given_name"`
+	FamilyName    string `json:"family_name"`
+	Locale        string `json:"locale"`
+}
+
+// VerifyGoogleToken verifies Google OAuth token
+func VerifyGoogleToken(idToken string) (*GoogleTokenInfo, error) {
+	url := fmt.Sprintf("https://oauth2.googleapis.com/tokeninfo?id_token=%s", idToken)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify token: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("invalid token: status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %v", err)
+	}
+
+	var tokenInfo GoogleTokenInfo
+	err = json.Unmarshal(body, &tokenInfo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response: %v", err)
+	}
+
+	return &tokenInfo, nil
+}
+
+// CreateRefreshToken creates a refresh token
+func CreateRefreshToken(userID string) (string, error) {
+	// Create refresh token with longer duration (7 days)
+	return CreatePasetoToken(userID, 7*24*time.Hour)
+}
+
+// ValidateEmail validates email format
+func ValidateEmail(email string) bool {
+	return len(email) > 0 && len(email) <= 254
+}
+
+// ValidatePassword validates password strength
+func ValidatePassword(password string) error {
+	if len(password) < 6 {
+		return fmt.Errorf("password must be at least 6 characters")
+	}
+	return nil
 }
