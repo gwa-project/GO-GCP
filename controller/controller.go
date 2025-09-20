@@ -15,7 +15,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// getStringFromInterface safely converts interface{} to string .
+// getStringFromInterface safely converts interface{} to string
 func getStringFromInterface(value interface{}) string {
 	if value == nil {
 		return ""
