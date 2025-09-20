@@ -15,7 +15,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// getStringFromInterface safely converts interface{} to string
+// getStringFromInterface safely converts interface{} to string .
 func getStringFromInterface(value interface{}) string {
 	if value == nil {
 		return ""
@@ -32,7 +32,6 @@ func GetHome(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }
-
 
 // GetConfig handles configuration for frontend
 func GetConfig(w http.ResponseWriter, r *http.Request) {
@@ -776,12 +775,12 @@ func PostConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := helper.ResponseSuccess("Config saved successfully", map[string]interface{}{
-		"id":           configData.ID,
-		"app_name":     configData.AppName,
-		"app_version":  configData.AppVersion,
-		"environment":  configData.Environment,
-		"created_at":   configData.CreatedAt,
-		"updated_at":   configData.UpdatedAt,
+		"id":          configData.ID,
+		"app_name":    configData.AppName,
+		"app_version": configData.AppVersion,
+		"environment": configData.Environment,
+		"created_at":  configData.CreatedAt,
+		"updated_at":  configData.UpdatedAt,
 	})
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
