@@ -114,3 +114,18 @@ type AuthResponse struct {
 	Tokens  TokenResponse `json:"tokens"`
 	Message string        `json:"message"`
 }
+
+// ChangePasswordRequest represents a change password request
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// AdminUserRequest represents admin user creation/update request
+type AdminUserRequest struct {
+	Name        string `json:"name"`
+	Email       string `json:"email"`
+	PhoneNumber string `json:"phonenumber"`
+	Role        string `json:"role"`
+	Password    string `json:"password,omitempty"`
+}

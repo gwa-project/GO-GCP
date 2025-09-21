@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gocroot/config"
@@ -609,12 +610,29 @@ func Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create new user
+	// Check if this is the first user (make them admin)
+	count, err := collection.CountDocuments(context.Background(), bson.M{})
+	if err != nil {
+		helper.LogError("Error counting users", err)
+		response := helper.ResponseError("Database error", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Set role - first user becomes admin, others become user
+	role := "user"
+	if count == 0 {
+		role = "admin"
+		helper.LogInfo("Creating first user as admin: " + registerReq.Email)
+	}
+
 	user := model.User{
 		Name:        registerReq.Name,
 		Email:       registerReq.Email,
 		PhoneNumber: registerReq.PhoneNumber,
 		Password:    hashedPassword,
-		Role:        "user",
+		Role:        role,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -669,51 +687,6 @@ func Register(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// GetAllUsers gets all users (for demo)
-func GetAllUsers(w http.ResponseWriter, r *http.Request) {
-	collection := config.GetCollection("users")
-	if collection == nil {
-		// Return demo data if no database
-		demoUsers := []map[string]interface{}{
-			{
-				"id":    "demo-1",
-				"name":  "Demo User 1",
-				"email": "demo1@example.com",
-			},
-			{
-				"id":    "demo-2",
-				"name":  "Demo User 2",
-				"email": "demo2@example.com",
-			},
-		}
-		response := helper.ResponseSuccess("Demo users retrieved", demoUsers)
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	cursor, err := collection.Find(context.Background(), bson.M{})
-	if err != nil {
-		response := helper.ResponseError("Failed to fetch users", http.StatusInternalServerError)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-	defer cursor.Close(context.Background())
-
-	var users []model.User
-	err = cursor.All(context.Background(), &users)
-	if err != nil {
-		response := helper.ResponseError("Failed to decode users", http.StatusInternalServerError)
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	response := helper.ResponseSuccess("Users retrieved successfully", users)
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
-}
 
 // PostConfig handles creating/updating config (admin only)
 func PostConfig(w http.ResponseWriter, r *http.Request) {
@@ -898,6 +871,728 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 	// or use shorter token expiration times
 
 	response := helper.ResponseSuccess("Logged out successfully", nil)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// ChangePassword handles password change requests
+func ChangePassword(w http.ResponseWriter, r *http.Request) {
+	helper.LogInfo("ChangePassword endpoint called")
+	var changeReq model.ChangePasswordRequest
+
+	err := json.NewDecoder(r.Body).Decode(&changeReq)
+	if err != nil {
+		response := helper.ResponseError("Invalid request body", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Get token from header
+	token := r.Header.Get("Authorization")
+	if token != "" && len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+
+	if token == "" {
+		token = r.Header.Get("Login")
+	}
+
+	if token == "" {
+		response := helper.ResponseError("Authorization token required", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Verify token and get user ID
+	userID, err := helper.VerifyPasetoToken(token)
+	if err != nil {
+		response := helper.ResponseError("Invalid or expired token", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Get database collection
+	collection := config.GetCollection("users")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Convert userID to ObjectID
+	objectID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		response := helper.ResponseError("Invalid user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Find user
+	var user model.User
+	err = collection.FindOne(context.Background(), bson.M{"_id": objectID}).Decode(&user)
+	if err != nil {
+		response := helper.ResponseError("User not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Verify current password
+	if !helper.CheckPassword(changeReq.CurrentPassword, user.Password) {
+		response := helper.ResponseError("Current password is incorrect", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Validate new password
+	if len(changeReq.NewPassword) < 6 {
+		response := helper.ResponseError("New password must be at least 6 characters long", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Hash new password
+	hashedPassword, err := helper.HashPassword(changeReq.NewPassword)
+	if err != nil {
+		response := helper.ResponseError("Failed to hash password", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Update password in database
+	update := bson.M{
+		"$set": bson.M{
+			"password":   hashedPassword,
+			"updated_at": time.Now(),
+		},
+	}
+
+	_, err = collection.UpdateOne(context.Background(), bson.M{"_id": objectID}, update)
+	if err != nil {
+		response := helper.ResponseError("Failed to update password", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	response := helper.ResponseSuccess("Password changed successfully", nil)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// GetAllUsers handles admin request to get all users
+func GetAllUsers(w http.ResponseWriter, r *http.Request) {
+	helper.LogInfo("GetAllUsers endpoint called")
+
+	// Get token from header
+	token := r.Header.Get("Authorization")
+	if token != "" && len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+
+	if token == "" {
+		token = r.Header.Get("Login")
+	}
+
+	if token == "" {
+		response := helper.ResponseError("Authorization token required", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Verify token and get user ID
+	userID, err := helper.VerifyPasetoToken(token)
+	if err != nil {
+		response := helper.ResponseError("Invalid or expired token", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Get database collection
+	collection := config.GetCollection("users")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if requesting user is admin
+	objectID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		response := helper.ResponseError("Invalid user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var requestingUser model.User
+	err = collection.FindOne(context.Background(), bson.M{"_id": objectID}).Decode(&requestingUser)
+	if err != nil {
+		response := helper.ResponseError("User not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	if requestingUser.Role != "admin" {
+		response := helper.ResponseError("Admin access required", http.StatusForbidden)
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Get all users
+	cursor, err := collection.Find(context.Background(), bson.M{})
+	if err != nil {
+		response := helper.ResponseError("Failed to retrieve users", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+	defer cursor.Close(context.Background())
+
+	var users []model.User
+	for cursor.Next(context.Background()) {
+		var user model.User
+		if err := cursor.Decode(&user); err != nil {
+			continue
+		}
+		// Remove password from response
+		user.Password = ""
+		users = append(users, user)
+	}
+
+	response := helper.ResponseSuccess("Users retrieved successfully", users)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// CreateUser handles admin request to create new user
+func CreateUser(w http.ResponseWriter, r *http.Request) {
+	helper.LogInfo("CreateUser endpoint called")
+	var userReq model.AdminUserRequest
+
+	err := json.NewDecoder(r.Body).Decode(&userReq)
+	if err != nil {
+		response := helper.ResponseError("Invalid request body", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Get token and verify admin access
+	token := r.Header.Get("Authorization")
+	if token != "" && len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+
+	if token == "" {
+		token = r.Header.Get("Login")
+	}
+
+	if token == "" {
+		response := helper.ResponseError("Authorization token required", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	userID, err := helper.VerifyPasetoToken(token)
+	if err != nil {
+		response := helper.ResponseError("Invalid or expired token", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	collection := config.GetCollection("users")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if requesting user is admin
+	objectID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		response := helper.ResponseError("Invalid user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var requestingUser model.User
+	err = collection.FindOne(context.Background(), bson.M{"_id": objectID}).Decode(&requestingUser)
+	if err != nil {
+		response := helper.ResponseError("User not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	if requestingUser.Role != "admin" {
+		response := helper.ResponseError("Admin access required", http.StatusForbidden)
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Validate required fields
+	if userReq.Name == "" || userReq.Email == "" || userReq.Password == "" {
+		response := helper.ResponseError("Name, email, and password are required", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if email already exists
+	var existingUser model.User
+	err = collection.FindOne(context.Background(), bson.M{"email": userReq.Email}).Decode(&existingUser)
+	if err == nil {
+		response := helper.ResponseError("Email already exists", http.StatusConflict)
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Validate role
+	if userReq.Role != "admin" && userReq.Role != "user" {
+		userReq.Role = "user" // Default to user
+	}
+
+	// Hash password
+	hashedPassword, err := helper.HashPassword(userReq.Password)
+	if err != nil {
+		response := helper.ResponseError("Failed to hash password", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Create new user
+	newUser := model.User{
+		ID:          primitive.NewObjectID(),
+		Name:        userReq.Name,
+		Email:       userReq.Email,
+		PhoneNumber: userReq.PhoneNumber,
+		Password:    hashedPassword,
+		Role:        userReq.Role,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	_, err = collection.InsertOne(context.Background(), newUser)
+	if err != nil {
+		response := helper.ResponseError("Failed to create user", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Remove password from response
+	newUser.Password = ""
+
+	response := helper.ResponseSuccess("User created successfully", newUser)
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(response)
+}
+
+// GetUserByID handles admin request to get user by ID
+func GetUserByID(w http.ResponseWriter, r *http.Request) {
+	helper.LogInfo("GetUserByID endpoint called")
+
+	// Extract user ID from URL path
+	path := r.URL.Path
+	parts := strings.Split(path, "/")
+	if len(parts) < 4 {
+		response := helper.ResponseError("User ID required", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+	targetUserID := parts[len(parts)-1]
+
+	// Get token and verify admin access
+	token := r.Header.Get("Authorization")
+	if token != "" && len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+
+	if token == "" {
+		token = r.Header.Get("Login")
+	}
+
+	if token == "" {
+		response := helper.ResponseError("Authorization token required", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	userID, err := helper.VerifyPasetoToken(token)
+	if err != nil {
+		response := helper.ResponseError("Invalid or expired token", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	collection := config.GetCollection("users")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if requesting user is admin
+	objectID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		response := helper.ResponseError("Invalid user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var requestingUser model.User
+	err = collection.FindOne(context.Background(), bson.M{"_id": objectID}).Decode(&requestingUser)
+	if err != nil {
+		response := helper.ResponseError("User not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	if requestingUser.Role != "admin" {
+		response := helper.ResponseError("Admin access required", http.StatusForbidden)
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Get target user
+	targetObjectID, err := primitive.ObjectIDFromHex(targetUserID)
+	if err != nil {
+		response := helper.ResponseError("Invalid target user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var targetUser model.User
+	err = collection.FindOne(context.Background(), bson.M{"_id": targetObjectID}).Decode(&targetUser)
+	if err != nil {
+		response := helper.ResponseError("Target user not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Remove password from response
+	targetUser.Password = ""
+
+	response := helper.ResponseSuccess("User retrieved successfully", targetUser)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// UpdateUser handles admin request to update user
+func UpdateUser(w http.ResponseWriter, r *http.Request) {
+	helper.LogInfo("UpdateUser endpoint called")
+
+	// Extract user ID from URL path
+	path := r.URL.Path
+	parts := strings.Split(path, "/")
+	if len(parts) < 4 {
+		response := helper.ResponseError("User ID required", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+	targetUserID := parts[len(parts)-1]
+
+	var userReq model.AdminUserRequest
+	err := json.NewDecoder(r.Body).Decode(&userReq)
+	if err != nil {
+		response := helper.ResponseError("Invalid request body", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Get token and verify admin access
+	token := r.Header.Get("Authorization")
+	if token != "" && len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+
+	if token == "" {
+		token = r.Header.Get("Login")
+	}
+
+	if token == "" {
+		response := helper.ResponseError("Authorization token required", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	userID, err := helper.VerifyPasetoToken(token)
+	if err != nil {
+		response := helper.ResponseError("Invalid or expired token", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	collection := config.GetCollection("users")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if requesting user is admin
+	objectID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		response := helper.ResponseError("Invalid user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var requestingUser model.User
+	err = collection.FindOne(context.Background(), bson.M{"_id": objectID}).Decode(&requestingUser)
+	if err != nil {
+		response := helper.ResponseError("User not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	if requestingUser.Role != "admin" {
+		response := helper.ResponseError("Admin access required", http.StatusForbidden)
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Validate target user ID
+	targetObjectID, err := primitive.ObjectIDFromHex(targetUserID)
+	if err != nil {
+		response := helper.ResponseError("Invalid target user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if target user exists
+	var targetUser model.User
+	err = collection.FindOne(context.Background(), bson.M{"_id": targetObjectID}).Decode(&targetUser)
+	if err != nil {
+		response := helper.ResponseError("Target user not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Prepare update data
+	updateData := bson.M{
+		"updated_at": time.Now(),
+	}
+
+	if userReq.Name != "" {
+		updateData["name"] = userReq.Name
+	}
+
+	if userReq.Email != "" {
+		// Check if email already exists (excluding current user)
+		var existingUser model.User
+		err = collection.FindOne(context.Background(), bson.M{
+			"email": userReq.Email,
+			"_id":   bson.M{"$ne": targetObjectID},
+		}).Decode(&existingUser)
+		if err == nil {
+			response := helper.ResponseError("Email already exists", http.StatusConflict)
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+		updateData["email"] = userReq.Email
+	}
+
+	if userReq.PhoneNumber != "" {
+		updateData["phonenumber"] = userReq.PhoneNumber
+	}
+
+	if userReq.Role != "" {
+		if userReq.Role == "admin" || userReq.Role == "user" {
+			updateData["role"] = userReq.Role
+		}
+	}
+
+	// Handle password update if provided
+	if userReq.Password != "" {
+		hashedPassword, err := helper.HashPassword(userReq.Password)
+		if err != nil {
+			response := helper.ResponseError("Failed to hash password", http.StatusInternalServerError)
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+		updateData["password"] = hashedPassword
+	}
+
+	// Update user
+	update := bson.M{"$set": updateData}
+	_, err = collection.UpdateOne(context.Background(), bson.M{"_id": targetObjectID}, update)
+	if err != nil {
+		response := helper.ResponseError("Failed to update user", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Get updated user
+	err = collection.FindOne(context.Background(), bson.M{"_id": targetObjectID}).Decode(&targetUser)
+	if err != nil {
+		response := helper.ResponseError("Failed to retrieve updated user", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Remove password from response
+	targetUser.Password = ""
+
+	response := helper.ResponseSuccess("User updated successfully", targetUser)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// DeleteUser handles admin request to delete user
+func DeleteUser(w http.ResponseWriter, r *http.Request) {
+	helper.LogInfo("DeleteUser endpoint called")
+
+	// Extract user ID from URL path
+	path := r.URL.Path
+	parts := strings.Split(path, "/")
+	if len(parts) < 4 {
+		response := helper.ResponseError("User ID required", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+	targetUserID := parts[len(parts)-1]
+
+	// Get token and verify admin access
+	token := r.Header.Get("Authorization")
+	if token != "" && len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+
+	if token == "" {
+		token = r.Header.Get("Login")
+	}
+
+	if token == "" {
+		response := helper.ResponseError("Authorization token required", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	userID, err := helper.VerifyPasetoToken(token)
+	if err != nil {
+		response := helper.ResponseError("Invalid or expired token", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	collection := config.GetCollection("users")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if requesting user is admin
+	objectID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		response := helper.ResponseError("Invalid user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var requestingUser model.User
+	err = collection.FindOne(context.Background(), bson.M{"_id": objectID}).Decode(&requestingUser)
+	if err != nil {
+		response := helper.ResponseError("User not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	if requestingUser.Role != "admin" {
+		response := helper.ResponseError("Admin access required", http.StatusForbidden)
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Validate target user ID
+	targetObjectID, err := primitive.ObjectIDFromHex(targetUserID)
+	if err != nil {
+		response := helper.ResponseError("Invalid target user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Prevent admin from deleting themselves
+	if userID == targetUserID {
+		response := helper.ResponseError("Cannot delete your own account", http.StatusForbidden)
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if target user exists
+	var targetUser model.User
+	err = collection.FindOne(context.Background(), bson.M{"_id": targetObjectID}).Decode(&targetUser)
+	if err != nil {
+		response := helper.ResponseError("Target user not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Delete user
+	_, err = collection.DeleteOne(context.Background(), bson.M{"_id": targetObjectID})
+	if err != nil {
+		response := helper.ResponseError("Failed to delete user", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	response := helper.ResponseSuccess("User deleted successfully", nil)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(response)
 }

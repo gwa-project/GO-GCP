@@ -2,6 +2,7 @@ package route
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gocroot/config"
 	"github.com/gocroot/controller"
@@ -22,14 +23,37 @@ func URL(w http.ResponseWriter, r *http.Request) {
 		controller.GetConfig(w, r)
 	case method == "GET" && path == "/data/user":
 		controller.GetDataUser(w, r)
+
+	// Authentication endpoints
 	case method == "POST" && path == "/auth/login":
 		controller.Login(w, r)
 	case method == "POST" && path == "/auth/register":
 		controller.Register(w, r)
 	case method == "POST" && path == "/auth/refresh":
 		controller.RefreshToken(w, r)
+	case method == "POST" && path == "/logout":
+		controller.Logout(w, r)
+
+	// User profile endpoints
+	case method == "PUT" && path == "/change-password":
+		controller.ChangePassword(w, r)
+
+	// Admin endpoints - User management
+	case method == "GET" && path == "/admin/users":
+		controller.GetAllUsers(w, r)
+	case method == "POST" && path == "/admin/users":
+		controller.CreateUser(w, r)
+	case method == "GET" && strings.HasPrefix(path, "/admin/users/") && len(strings.Split(path, "/")) == 4:
+		controller.GetUserByID(w, r)
+	case method == "PUT" && strings.HasPrefix(path, "/admin/users/") && len(strings.Split(path, "/")) == 4:
+		controller.UpdateUser(w, r)
+	case method == "DELETE" && strings.HasPrefix(path, "/admin/users/") && len(strings.Split(path, "/")) == 4:
+		controller.DeleteUser(w, r)
+
+	// Legacy endpoint (for backward compatibility)
 	case method == "GET" && path == "/users":
 		controller.GetAllUsers(w, r)
+
 	default:
 		controller.NotFound(w, r)
 	}
