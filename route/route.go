@@ -31,10 +31,14 @@ func URL(w http.ResponseWriter, r *http.Request) {
 		controller.Register(w, r)
 	case method == "POST" && path == "/auth/refresh":
 		controller.RefreshToken(w, r)
+	case method == "GET" && path == "/auth/profile":
+		controller.GetProfile(w, r)
 	case method == "POST" && path == "/logout":
 		controller.Logout(w, r)
 
 	// User profile endpoints
+	case method == "PUT" && path == "/profile/update":
+		controller.UpdateProfile(w, r)
 	case method == "PUT" && path == "/change-password":
 		controller.ChangePassword(w, r)
 

@@ -845,6 +845,150 @@ func RefreshToken(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// GetProfile handles getting current user profile
+func GetProfile(w http.ResponseWriter, r *http.Request) {
+	// Get token from header
+	token := r.Header.Get("Authorization")
+	if token != "" && len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+	if token == "" {
+		token = r.Header.Get("Login")
+	}
+
+	if token == "" {
+		response := helper.ResponseError("Authorization token required", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Verify token
+	userID, err := helper.VerifyPasetoToken(token)
+	if err != nil {
+		response := helper.ResponseError("Invalid or expired token", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Get user from database
+	collection := config.GetCollection("users")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	objectID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		response := helper.ResponseError("Invalid user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var user model.User
+	err = collection.FindOne(context.Background(), bson.M{"_id": objectID}).Decode(&user)
+	if err != nil {
+		response := helper.ResponseError("User not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Remove sensitive information
+	user.Password = ""
+
+	response := helper.ResponseSuccess("User profile retrieved successfully", user)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// UpdateProfile handles updating current user profile
+func UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	// Get token from header
+	token := r.Header.Get("Authorization")
+	if token != "" && len(token) > 7 && token[:7] == "Bearer " {
+		token = token[7:]
+	}
+	if token == "" {
+		token = r.Header.Get("Login")
+	}
+
+	if token == "" {
+		response := helper.ResponseError("Authorization token required", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Verify token
+	userID, err := helper.VerifyPasetoToken(token)
+	if err != nil {
+		response := helper.ResponseError("Invalid or expired token", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Parse request body
+	var updateReq model.UpdateUserRequest
+	err = json.NewDecoder(r.Body).Decode(&updateReq)
+	if err != nil {
+		response := helper.ResponseError("Invalid JSON format", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Get database collection
+	collection := config.GetCollection("users")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	objectID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		response := helper.ResponseError("Invalid user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Prepare update document
+	update := bson.M{
+		"$set": bson.M{
+			"updated_at": time.Now(),
+		},
+	}
+
+	// Only update fields that are provided
+	if updateReq.Name != "" {
+		update["$set"].(bson.M)["name"] = updateReq.Name
+	}
+	if updateReq.PhoneNumber != "" {
+		update["$set"].(bson.M)["phonenumber"] = updateReq.PhoneNumber
+	}
+
+	// Update user profile
+	_, err = collection.UpdateOne(context.Background(), bson.M{"_id": objectID}, update)
+	if err != nil {
+		response := helper.ResponseError("Failed to update profile", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	response := helper.ResponseSuccess("Profile updated successfully", nil)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
 // Logout handles user logout (invalidate tokens)
 func Logout(w http.ResponseWriter, r *http.Request) {
 	// Get token from header
