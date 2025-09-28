@@ -29,6 +29,8 @@ func URL(w http.ResponseWriter, r *http.Request) {
 		controller.Login(w, r)
 	case method == "POST" && path == "/auth/register":
 		controller.Register(w, r)
+	case method == "POST" && path == "/auth/google":
+		controller.Login(w, r) // Google auth uses same endpoint with google_auth flag
 	case method == "POST" && path == "/auth/refresh":
 		controller.RefreshToken(w, r)
 	case method == "GET" && path == "/auth/profile":
