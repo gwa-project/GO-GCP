@@ -60,6 +60,20 @@ func URL(w http.ResponseWriter, r *http.Request) {
 	case method == "GET" && path == "/users":
 		controller.GetAllUsers(w, r)
 
+	// QRIS Crowdfunding endpoints
+	case method == "GET" && path == "/api/crowdfunding/queueStatus":
+		controller.CheckQueueStatus(w, r)
+	case method == "GET" && path == "/api/crowdfunding/userinfo":
+		controller.GetUserInfoQRIS(w, r)
+	case method == "POST" && path == "/api/crowdfunding/qris/createOrder":
+		controller.CreateQRISOrder(w, r)
+	case method == "GET" && strings.HasPrefix(path, "/api/crowdfunding/checkPayment/"):
+		controller.CheckPaymentStatus(w, r)
+	case method == "POST" && path == "/api/crowdfunding/notification":
+		controller.ProcessNotification(w, r)
+	case method == "GET" && path == "/api/crowdfunding/totals":
+		controller.GetTotals(w, r)
+
 	default:
 		controller.NotFound(w, r)
 	}
