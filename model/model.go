@@ -12,6 +12,7 @@ type User struct {
 	Name        string             `json:"name" bson:"name"`
 	Email       string             `json:"email" bson:"email"`
 	PhoneNumber string             `json:"phonenumber,omitempty" bson:"phonenumber,omitempty"`
+	DiscordID   string             `json:"discordid,omitempty" bson:"discordid,omitempty"`
 	Password    string             `json:"-" bson:"password,omitempty"`
 	Picture     string             `json:"picture,omitempty" bson:"picture,omitempty"`
 	GoogleID    string             `json:"google_id,omitempty" bson:"google_id,omitempty"`
@@ -44,6 +45,7 @@ type RegisterRequest struct {
 	Name        string `json:"name"`
 	Email       string `json:"email"`
 	PhoneNumber string `json:"phonenumber,omitempty"`
+	DiscordID   string `json:"discordid,omitempty"`
 	Password    string `json:"password"`
 }
 

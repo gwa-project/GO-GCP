@@ -631,6 +631,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 		Name:        registerReq.Name,
 		Email:       registerReq.Email,
 		PhoneNumber: registerReq.PhoneNumber,
+		DiscordID:   registerReq.DiscordID,
 		Password:    hashedPassword,
 		Role:        role,
 		CreatedAt:   time.Now(),
