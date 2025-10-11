@@ -564,8 +564,8 @@ func GetWebhookSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decode token to get user role
-	payload, err := helper.Decode(tokenString)
+	// Decode token to get user ID
+	userID, err := helper.VerifyPasetoToken(tokenString)
 	if err != nil {
 		response := helper.ResponseError("Invalid token", http.StatusUnauthorized)
 		w.WriteHeader(http.StatusUnauthorized)
@@ -573,8 +573,34 @@ func GetWebhookSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get user from MongoDB to check role
+	userCollection := config.GetCollection("user")
+	if userCollection == nil {
+		response := helper.ResponseError("Database connection failed", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	objectID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		response := helper.ResponseError("Invalid user ID", http.StatusBadRequest)
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var requestingUser model.User
+	err = userCollection.FindOne(context.Background(), bson.M{"_id": objectID}).Decode(&requestingUser)
+	if err != nil {
+		response := helper.ResponseError("User not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
 	// Check if user is admin
-	if payload.Role != "admin" {
+	if requestingUser.Role != "admin" {
 		response := helper.ResponseError("Admin access required", http.StatusForbidden)
 		w.WriteHeader(http.StatusForbidden)
 		json.NewEncoder(w).Encode(response)
