@@ -21,6 +21,38 @@ const (
 	QRISExpirySeconds = 3600 // 60 minutes
 )
 
+// InitializeWebhookSecret initializes webhook secret if it doesn't exist
+func InitializeWebhookSecret() {
+	collection := config.GetCollection("webhooksecret")
+	if collection == nil {
+		return
+	}
+
+	var existingSecret model.WebhookSecret
+	err := collection.FindOne(context.Background(), bson.M{"isActive": true}).Decode(&existingSecret)
+	if err != nil {
+		// No active secret exists, create one
+		secretKey := fmt.Sprintf("GWA-WEBHOOK-%s-%s",
+			uuid.New().String()[:8],
+			uuid.New().String()[:8])
+
+		_, err = collection.InsertOne(context.Background(), model.WebhookSecret{
+			SecretKey:   secretKey,
+			Description: "Auto-generated webhook secret for QRIS payment notifications",
+			IsActive:    true,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		})
+		if err != nil {
+			log.Printf("Error initializing webhook secret: %v", err)
+		} else {
+			log.Printf("Initialized webhook secret: %s", secretKey)
+		}
+	} else {
+		log.Printf("Webhook secret already exists: %s", existingSecret.SecretKey)
+	}
+}
+
 // InitializeCrowdfundingTotal initializes the total payments collection if it doesn't exist
 func InitializeCrowdfundingTotal() {
 	var total model.CrowdfundingTotal
@@ -521,8 +553,96 @@ func CheckPaymentStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+// GetWebhookSecret returns the active webhook secret (admin only)
+func GetWebhookSecret(w http.ResponseWriter, r *http.Request) {
+	// Get user from context (set by authentication middleware)
+	tokenString := r.Header.Get("Login")
+	if tokenString == "" {
+		response := helper.ResponseError("Unauthorized", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Decode token to get user role
+	payload, err := helper.Decode(tokenString)
+	if err != nil {
+		response := helper.ResponseError("Invalid token", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if user is admin
+	if payload.Role != "admin" {
+		response := helper.ResponseError("Admin access required", http.StatusForbidden)
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	collection := config.GetCollection("webhooksecret")
+	if collection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var secret model.WebhookSecret
+	err = collection.FindOne(context.Background(), bson.M{"isActive": true}).Decode(&secret)
+	if err != nil {
+		response := helper.ResponseError("Webhook secret not found", http.StatusNotFound)
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	response := map[string]interface{}{
+		"success":     true,
+		"secretKey":   secret.SecretKey,
+		"description": secret.Description,
+		"createdAt":   secret.CreatedAt,
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
 // ProcessNotification processes payment notification from gateway
 func ProcessNotification(w http.ResponseWriter, r *http.Request) {
+	// Validate webhook secret from header
+	webhookSecret := r.Header.Get("X-Webhook-Secret")
+	if webhookSecret == "" {
+		response := helper.ResponseError("Missing webhook secret", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Check if secret is valid
+	secretCollection := config.GetCollection("webhooksecret")
+	if secretCollection == nil {
+		response := helper.ResponseError("Database not connected", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	var storedSecret model.WebhookSecret
+	err := secretCollection.FindOne(context.Background(), bson.M{
+		"secretKey": webhookSecret,
+		"isActive":  true,
+	}).Decode(&storedSecret)
+
+	if err != nil {
+		response := helper.ResponseError("Invalid webhook secret", http.StatusUnauthorized)
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(response)
+		log.Printf("Webhook authentication failed: invalid secret")
+		return
+	}
+
 	var notification model.NotificationRequest
 	if err := json.NewDecoder(r.Body).Decode(&notification); err != nil {
 		response := helper.ResponseError("Invalid request body", http.StatusBadRequest)

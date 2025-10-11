@@ -68,3 +68,13 @@ type CrowdfundingPaymentResponse struct {
 	IsProcessing  bool          `json:"isProcessing,omitempty"`
 	PaymentMethod PaymentMethod `json:"paymentMethod,omitempty"`
 }
+
+// WebhookSecret struct to store webhook validation secret
+type WebhookSecret struct {
+	ID          primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
+	SecretKey   string             `json:"secretKey" bson:"secretKey"`
+	Description string             `json:"description" bson:"description"`
+	IsActive    bool               `json:"isActive" bson:"isActive"`
+	CreatedAt   time.Time          `json:"createdAt" bson:"createdAt"`
+	UpdatedAt   time.Time          `json:"updatedAt" bson:"updatedAt"`
+}

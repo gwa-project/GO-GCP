@@ -14,6 +14,11 @@ func URL(w http.ResponseWriter, r *http.Request) {
 	}
 	config.SetEnv()
 
+	// Initialize webhook secret on first request
+	controller.InitializeWebhookSecret()
+	controller.InitializeCrowdfundingTotal()
+	controller.InitializeCrowdfundingQueue()
+
 	var method, path string = r.Method, r.URL.Path
 
 	switch {
@@ -73,6 +78,8 @@ func URL(w http.ResponseWriter, r *http.Request) {
 		controller.ProcessNotification(w, r)
 	case method == "GET" && path == "/api/crowdfunding/totals":
 		controller.GetTotals(w, r)
+	case method == "GET" && path == "/api/crowdfunding/webhook-secret":
+		controller.GetWebhookSecret(w, r)
 
 	default:
 		controller.NotFound(w, r)
